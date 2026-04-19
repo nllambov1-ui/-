@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SLNC Dashboard – Два източника за SOL цена</title>
+    <title>SLNC Dashboard – Binance & CoinGecko</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -126,6 +126,7 @@
         .refresh-btn:hover { border-color: var(--accent); color: var(--accent-light); }
         .refresh-btn.spinning svg { animation: spin 0.8s linear infinite; }
         .calculator-note { font-size: 9px; color: var(--text-muted); text-align: center; margin-top: 8px; }
+        .source-badge { font-size: 8px; background: var(--bg-secondary); padding: 2px 6px; border-radius: 10px; display: inline-block; margin-left: 8px; color: var(--accent-light); }
     </style>
 </head>
 <body>
@@ -152,7 +153,7 @@
 <div class="container">
     <!-- Цени -->
     <div class="price-cards" id="priceCards">
-        <div class="loading"><div class="loading-spinner"></div><div class="loading-text">Зареждане на цени...</div></div>
+        <div class="loading"><div class="loading-spinner"></div><div class="loading-text">Зареждане на цени от Binance...</div></div>
     </div>
 
     <div class="section-title"><span class="icon">📊</span> Технически анализ</div>
@@ -275,11 +276,90 @@ let SOL_LOW_24H = 0;
 let SOL_AMPLITUDE = 0;
 let PRICE_HISTORY_4H = [];
 let PRICE_HISTORY_1W = [];
+let activeDataSource = 'Binance'; // Проследява кой източник се използва
 
 // Коефициент SOL -> SLNC (1 SLNC = 0.1125 SOL, следователно 1 SOL = 8.888888... SLNC)
 const SLNC_PER_SOL = 1 / 0.1125;   // ≈ 8.8888889
+const SLNC_TO_SOL_RATIO = 0.1125;  // 1 SLNC = 0.1125 SOL
 
-// ============ CoinGecko API ============
+// ============ Binance API ============
+const BINANCE_BASE = 'https://api.binance.com/api/v3';
+
+// Функция за извличане с повторение за Binance
+async function binanceFetchWithRetry(url, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const res = await fetch(url);
+            if (res.status === 429 || res.status === 418) {
+                // Binance rate limit или IP блок
+                await sleep(2000 * (i + 1));
+                continue;
+            }
+            if (!res.ok) throw new Error(`Binance HTTP ${res.status}`);
+            return await res.json();
+        } catch (e) {
+            if (i === retries - 1) throw e;
+            await sleep(1000 * (i + 1));
+        }
+    }
+}
+
+// Функция за текуща цена от Binance
+async function fetchBinancePrice() {
+    try {
+        const url = `${BINANCE_BASE}/ticker/price?symbol=SOLEUR`;
+        const data = await binanceFetchWithRetry(url);
+        if (data && data.price) {
+            return { price: parseFloat(data.price) };
+        }
+        throw new Error('Няма цена от Binance');
+    } catch (e) {
+        console.error('❌ Binance цена грешка:', e);
+        return null;
+    }
+}
+
+// Функция за 24h статистика от Binance
+async function fetchBinance24hrStats() {
+    try {
+        const url = `${BINANCE_BASE}/ticker/24hr?symbol=SOLEUR`;
+        const data = await binanceFetchWithRetry(url);
+        if (data) {
+            return {
+                priceChange: parseFloat(data.priceChange),
+                priceChangePercent: parseFloat(data.priceChangePercent),
+                high: parseFloat(data.highPrice),
+                low: parseFloat(data.lowPrice),
+                volume: parseFloat(data.volume)
+            };
+        }
+        throw new Error('Няма 24h статистика от Binance');
+    } catch (e) {
+        console.error('❌ Binance 24h статистика грешка:', e);
+        return null;
+    }
+}
+
+// Функция за исторически данни от Binance
+async function fetchBinanceKlines(symbol = 'SOLEUR', interval = '1h', limit = 168) {
+    try {
+        const url = `${BINANCE_BASE}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+        const data = await binanceFetchWithRetry(url);
+        if (data && Array.isArray(data)) {
+            return data.map(kline => ({
+                time: kline[0],        // Отварящо време (timestamp)
+                price: parseFloat(kline[4]),  // Затваряща цена (close)
+                volume: parseFloat(kline[5])   // Обем
+            }));
+        }
+        throw new Error('Няма kline данни от Binance');
+    } catch (e) {
+        console.error('❌ Binance klines грешка:', e);
+        return null;
+    }
+}
+
+// ============ CoinGecko API (резервен източник) ============
 const CG_BASE = 'https://api.coingecko.com/api/v3';
 
 async function fetchWithRetry(url, retries = 3) {
@@ -295,26 +375,34 @@ async function fetchWithRetry(url, retries = 3) {
         }
     }
 }
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// ============ ВТОРИ ИЗТОЧНИК ЗА SOL ЦЕНА ============
-async function fetchFallbackPrice() {
+async function fetchCoingeckoPrices() {
     try {
-        const url = 'https://min-api.cryptocompare.com/data/price?fsym=SOL&tsyms=EUR';
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`CryptoCompare HTTP ${response.status}`);
-        const data = await response.json();
-        if (data && data.EUR) {
-            console.log('✅ Цената е заредена от CryptoCompare');
-            return { price: data.EUR, change: null };
+        const data = await fetchWithRetry(`${CG_BASE}/simple/price?ids=solana,selence&vs_currencies=eur&include_24hr_change=true`);
+        if (data.solana && data.solana.eur) {
+            const solPrice = data.solana.eur;
+            const solChange = data.solana.eur_24h_change || 0;
+            let slncPrice = (data.selence && data.selence.eur) ? data.selence.eur : solPrice * 0.1125;
+            
+            // Опит за 24h high/low
+            let high24h = 0, low24h = 0, amplitude = 0;
+            const marketData = await fetchWithRetry(`${CG_BASE}/coins/solana?localization=false&tickers=false&community_data=false&developer_data=false&sparkline=false`);
+            if (marketData.market_data) {
+                high24h = marketData.market_data.high_24h.eur;
+                low24h = marketData.market_data.low_24h.eur;
+                amplitude = ((high24h - low24h) / low24h * 100);
+            }
+            
+            return { solPrice, solChange, slncPrice, high24h, low24h, amplitude };
         }
-        throw new Error('Няма EUR цена от CryptoCompare');
+        throw new Error('CoinGecko не върна валидни данни');
     } catch (e) {
-        console.error('❌ CryptoCompare грешка:', e);
+        console.warn('⚠️ CoinGecko неуспешен:', e.message);
         return null;
     }
 }
 
+// ============ ОСНОВНА ФУНКЦИЯ ЗА ЦЕНИ (Binance първи, CoinGecko резервен) ============
 async function fetchPrices() {
     let solPrice = 0;
     let solChange = 0;
@@ -323,45 +411,65 @@ async function fetchPrices() {
     let low24h = 0;
     let amplitude = 0;
     let success = false;
+    let sourceUsed = '';
 
-    // ---- ПЪРВИ ИЗТОЧНИК: CoinGecko ----
+    // ---- ПЪРВИ ИЗТОЧНИК: Binance ----
+    console.log('🔄 Опит с основен източник Binance...');
     try {
-        const data = await fetchWithRetry(`${CG_BASE}/simple/price?ids=solana,selence&vs_currencies=eur&include_24hr_change=true&include_24hr_vol=true&include_market_cap=true`);
-        if (data.solana && data.solana.eur) {
-            solPrice = data.solana.eur;
-            solChange = data.solana.eur_24h_change || 0;
-            slncPrice = (data.selence && data.selence.eur) ? data.selence.eur : solPrice * 0.1125;
+        const [priceData, statsData, klinesData] = await Promise.all([
+            fetchBinancePrice(),
+            fetchBinance24hrStats(),
+            fetchBinanceKlines('SOLEUR', '1h', 168)
+        ]);
+        
+        if (priceData && priceData.price > 0) {
+            solPrice = priceData.price;
+            sourceUsed = 'Binance';
+            
+            if (statsData) {
+                solChange = statsData.priceChangePercent;
+                high24h = statsData.high;
+                low24h = statsData.low;
+                amplitude = ((high24h - low24h) / low24h * 100);
+            } else {
+                // Ако няма 24h статистика, използваме приблизителни стойности
+                high24h = solPrice * 1.05;
+                low24h = solPrice * 0.95;
+                amplitude = 10;
+            }
+            
+            // Цената на SLNC се изчислява чрез коефициента
+            slncPrice = solPrice * SLNC_TO_SOL_RATIO;
+            
+            // Ако има kline данни, ги запазваме
+            if (klinesData && klinesData.length > 0) {
+                PRICE_HISTORY_4H = klinesData;
+            }
+            
             success = true;
-            console.log('✅ Цената е заредена от CoinGecko');
+            console.log('✅ Цената е заредена от Binance');
         } else {
-            throw new Error('CoinGecko не върна валидни данни');
-        }
-
-        // Опит за 24h high/low от същия източник
-        const marketData = await fetchWithRetry(`${CG_BASE}/coins/solana?localization=false&tickers=false&community_data=false&developer_data=false&sparkline=false`);
-        if (marketData.market_data) {
-            high24h = marketData.market_data.high_24h.eur;
-            low24h = marketData.market_data.low_24h.eur;
-            amplitude = ((high24h - low24h) / low24h * 100);
+            throw new Error('Binance не върна валидни данни');
         }
     } catch (e) {
-        console.warn('⚠️ CoinGecko неуспешен:', e.message);
+        console.warn('⚠️ Binance неуспешен:', e.message);
         success = false;
     }
 
-    // ---- ВТОРИ ИЗТОЧНИК: CryptoCompare (ако първият не успя) ----
+    // ---- ВТОРИ ИЗТОЧНИК: CoinGecko (ако първият не успя) ----
     if (!success || solPrice === 0) {
-        console.log('🔄 Опит с резервен източник CryptoCompare...');
-        const fallback = await fetchFallbackPrice();
-        if (fallback && fallback.price > 0) {
-            solPrice = fallback.price;
-            solChange = 0;
-            slncPrice = solPrice * 0.1125;
+        console.log('🔄 Опит с резервен източник CoinGecko...');
+        const geckoData = await fetchCoingeckoPrices();
+        if (geckoData && geckoData.solPrice > 0) {
+            solPrice = geckoData.solPrice;
+            solChange = geckoData.solChange;
+            slncPrice = geckoData.slncPrice;
+            high24h = geckoData.high24h;
+            low24h = geckoData.low24h;
+            amplitude = geckoData.amplitude;
             success = true;
-            high24h = solPrice * 1.05;
-            low24h = solPrice * 0.95;
-            amplitude = 10;
-            console.log('✅ Цената е заредена от CryptoCompare (без 24h промяна)');
+            sourceUsed = 'CoinGecko';
+            console.log('✅ Цената е заредена от CoinGecko');
         } else {
             console.error('❌ И двата източника са недостъпни');
         }
@@ -372,12 +480,14 @@ async function fetchPrices() {
         return;
     }
 
+    // Запазване на глобалните променливи
     SOL_PRICE = solPrice;
     SOL_CHANGE_24H = solChange;
     SLNC_PRICE = slncPrice;
     SOL_HIGH_24H = high24h;
     SOL_LOW_24H = low24h;
     SOL_AMPLITUDE = amplitude;
+    activeDataSource = sourceUsed;
 
     updatePriceCards();
     updatePortfolioDisplay();
@@ -388,15 +498,18 @@ function updatePriceCards() {
     const cards = document.getElementById('priceCards');
     const changeClass = SOL_CHANGE_24H >= 0 ? 'positive' : 'negative';
     const changeSign = SOL_CHANGE_24H >= 0 ? '+' : '';
+    const sourceBadge = `<span class="source-badge">📡 ${activeDataSource}</span>`;
     cards.innerHTML = `
-        <div class="price-card"><div class="price-card-label">SOL / EUR</div><div class="price-card-value">€${SOL_PRICE.toFixed(2)}</div><div class="price-card-sub price-change ${changeClass}">${changeSign}${SOL_CHANGE_24H.toFixed(2)}%</div></div>
+        <div class="price-card"><div class="price-card-label">SOL / EUR ${sourceBadge}</div><div class="price-card-value">€${SOL_PRICE.toFixed(2)}</div><div class="price-card-sub price-change ${changeClass}">${changeSign}${SOL_CHANGE_24H.toFixed(2)}%</div></div>
         <div class="price-card"><div class="price-card-label">24ч Промяна</div><div class="price-card-value price-change ${changeClass}">${changeSign}${SOL_CHANGE_24H.toFixed(2)}%</div><div class="price-card-sub">Дневна разлика</div></div>
         <div class="price-card"><div class="price-card-label">Дневна Амплитуда</div><div class="price-card-value">${SOL_AMPLITUDE.toFixed(2)}%</div><div class="price-card-sub">€${SOL_LOW_24H.toFixed(2)} — €${SOL_HIGH_24H.toFixed(2)}</div></div>
         <div class="price-card"><div class="price-card-label">SLNC / EUR</div><div class="price-card-value">€${SLNC_PRICE.toFixed(4)}</div><div class="price-card-sub">1 SLNC = 0.1125 SOL</div></div>
     `;
 }
 
-// ============ Технически индикатори (същите като в оригиналния код) ============
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ============ Технически индикатори ============
 function calcSMA(data, period) { const result = []; for (let i = 0; i < data.length; i++) { if (i < period - 1) { result.push(null); continue; } let sum = 0; for (let j = 0; j < period; j++) sum += data[i - j]; result.push(sum / period); } return result; }
 function calcEMA(data, period) { const result = []; const k = 2 / (period + 1); let ema = data[0]; result.push(ema); for (let i = 1; i < data.length; i++) { ema = data[i] * k + ema * (1 - k); result.push(ema); } return result; }
 function calcRSI(data, period = 14) { const changes = []; for (let i = 1; i < data.length; i++) changes.push(data[i] - data[i - 1]); let avgGain = 0, avgLoss = 0; for (let i = 0; i < period; i++) { if (changes[i] > 0) avgGain += changes[i]; else avgLoss += Math.abs(changes[i]); } avgGain /= period; avgLoss /= period; const rsi = []; for (let i = 0; i < period; i++) rsi.push(null); let rs = avgLoss === 0 ? 100 : avgGain / avgLoss; rsi.push(100 - (100 / (1 + rs))); for (let i = period; i < changes.length; i++) { const gain = changes[i] > 0 ? changes[i] : 0; const loss = changes[i] < 0 ? Math.abs(changes[i]) : 0; avgGain = (avgGain * (period - 1) + gain) / period; avgLoss = (avgLoss * (period - 1) + loss) / period; rs = avgLoss === 0 ? 100 : avgGain / avgLoss; rsi.push(100 - (100 / (1 + rs))); } return rsi; }
@@ -407,8 +520,6 @@ function calcATR(highs, lows, closes, period = 14) { const trueRanges = []; for 
 function calcWilliamsR(highs, lows, closes, period = 14) { const wr = []; for (let i = 0; i < closes.length; i++) { if (i < period - 1) { wr.push(null); continue; } let highestHigh = -Infinity, lowestLow = Infinity; for (let j = 0; j < period; j++) { if (highs[i - j] > highestHigh) highestHigh = highs[i - j]; if (lows[i - j] < lowestLow) lowestLow = lows[i - j]; } const range = highestHigh - lowestLow; wr.push(range === 0 ? -50 : ((highestHigh - closes[i]) / range) * -100); } return wr; }
 function calcMomentum(data, period = 10) { const mom = []; for (let i = 0; i < data.length; i++) { if (i < period) { mom.push(null); continue; } mom.push(data[i] - data[i - period]); } return mom; }
 function calcVolumeAnalysis(volumes, period = 20) { const avgVolume = calcSMA(volumes, period); const lastVol = volumes[volumes.length - 1]; const lastAvg = avgVolume[avgVolume.length - 1]; return { current: lastVol, average: lastAvg, ratio: lastAvg ? lastVol / lastAvg : 1 }; }
-function calcCCI(highs, lows, closes, period = 20) { const tp = closes.map((c, i) => (highs[i] + lows[i] + c) / 3); const sma = calcSMA(tp, period); const cci = []; for (let i = 0; i < closes.length; i++) { if (sma[i] === null) { cci.push(null); continue; } let meanDev = 0; for (let j = 0; j < period; j++) meanDev += Math.abs(tp[i - j] - sma[i]); meanDev /= period; cci.push(meanDev === 0 ? 0 : (tp[i] - sma[i]) / (0.015 * meanDev)); } return cci; }
-function calcOBV(closes, volumes) { const obv = [volumes[0] || 0]; for (let i = 1; i < closes.length; i++) { if (closes[i] > closes[i - 1]) obv.push(obv[i - 1] + (volumes[i] || 0)); else if (closes[i] < closes[i - 1]) obv.push(obv[i - 1] - (volumes[i] || 0)); else obv.push(obv[i - 1]); } return obv; }
 function generateHighLow(prices, volatility = 0.005) { const highs = [], lows = []; for (const p of prices) { const v = p * volatility; highs.push(p + v * Math.random()); lows.push(p - v * Math.random()); } return { highs, lows }; }
 function computeIndicators(prices, volumes, timeframe) { const closes = prices.map(p => p.price); const vols = prices.map(p => p.volume); const { highs, lows } = generateHighLow(closes); const rsi = calcRSI(closes, 14); const rsiVal = rsi.filter(v => v !== null).pop(); const macd = calcMACD(closes); const macdVal = macd.macd[macd.macd.length - 1]; const macdHist = macd.histogram.filter(v => v !== null).pop(); const bb = calcBollingerBands(closes, 20, 2); const bbUpper = bb.upper.filter(v => v !== null).pop(); const bbLower = bb.lower.filter(v => v !== null).pop(); const bbPos = bbUpper && bbLower ? ((closes[closes.length - 1] - bbLower) / (bbUpper - bbLower) * 100) : 50; const ema9 = calcEMA(closes, 9); const ema21 = calcEMA(closes, 21); const ema9Val = ema9[ema9.length - 1]; const ema21Val = ema21[ema21.length - 1]; const sma50 = calcSMA(closes, 50); const sma50Val = sma50.filter(v => v !== null).pop(); const stoch = calcStochastic(highs, lows, closes); const stochK = stoch.k.filter(v => v !== null).pop(); const wr = calcWilliamsR(highs, lows, closes); const wrVal = wr.filter(v => v !== null).pop(); const atr = calcATR(highs, lows, closes); const atrVal = atr[atr.length - 1]; const volAnalysis = calcVolumeAnalysis(vols); const mom = calcMomentum(closes, 10); const momVal = mom.filter(v => v !== null).pop(); const indicators = [ { name: 'RSI (14)', value: rsiVal ? rsiVal.toFixed(1) : '—', detail: rsiVal < 30 ? 'Продаден' : rsiVal > 70 ? 'Купен' : 'Неутрален', signal: rsiVal < 30 ? 'buy' : rsiVal > 70 ? 'sell' : 'neutral', gauge: rsiVal || 50, gaugeColor: rsiVal < 30 ? 'var(--green)' : rsiVal > 70 ? 'var(--red)' : 'var(--yellow)' }, { name: 'MACD', value: macdVal ? macdVal.toFixed(2) : '—', detail: `Hist: ${macdHist ? macdHist.toFixed(2) : '—'}`, signal: macdHist > 0 ? 'buy' : 'sell', gauge: Math.min(100, Math.max(0, 50 + macdHist * 10)), gaugeColor: macdHist > 0 ? 'var(--green)' : 'var(--red)' }, { name: 'Bollinger Bands', value: `${bbPos.toFixed(0)}%`, detail: `U: ${bbUpper?.toFixed(2) || '—'} | L: ${bbLower?.toFixed(2) || '—'}`, signal: bbPos > 80 ? 'sell' : bbPos < 20 ? 'buy' : 'neutral', gauge: bbPos, gaugeColor: bbPos > 80 ? 'var(--red)' : bbPos < 20 ? 'var(--green)' : 'var(--yellow)' }, { name: 'EMA 9/21', value: `${ema9Val?.toFixed(2) || '—'} / ${ema21Val?.toFixed(2) || '—'}`, detail: ema9Val > ema21Val ? 'Бичи кръст' : 'Мечи кръст', signal: ema9Val > ema21Val ? 'buy' : 'sell', gauge: ema9Val > ema21Val ? 75 : 25, gaugeColor: ema9Val > ema21Val ? 'var(--green)' : 'var(--red)' }, { name: 'SMA 50', value: sma50Val ? sma50Val.toFixed(2) : '—', detail: closes[closes.length - 1] > sma50Val ? 'Над SMA' : 'Под SMA', signal: closes[closes.length - 1] > sma50Val ? 'buy' : 'sell', gauge: closes[closes.length - 1] > sma50Val ? 70 : 30, gaugeColor: closes[closes.length - 1] > sma50Val ? 'var(--green)' : 'var(--red)' }, { name: 'Stochastic', value: `%K: ${stochK?.toFixed(1) || '—'}`, detail: `%D: ${stoch?.d?.filter(v=>v!==null).pop()?.toFixed(1) || '—'}`, signal: stochK < 20 ? 'buy' : stochK > 80 ? 'sell' : 'neutral', gauge: stochK || 50, gaugeColor: stochK < 20 ? 'var(--green)' : stochK > 80 ? 'var(--red)' : 'var(--yellow)' }, { name: 'Williams %R', value: wrVal ? wrVal.toFixed(1) : '—', detail: wrVal < -80 ? 'Продаден' : wrVal > -20 ? 'Купен' : 'Неутрален', signal: wrVal < -80 ? 'buy' : wrVal > -20 ? 'sell' : 'neutral', gauge: wrVal ? (wrVal + 100) : 50, gaugeColor: wrVal < -80 ? 'var(--green)' : wrVal > -20 ? 'var(--red)' : 'var(--yellow)' }, { name: 'ATR (14)', value: atrVal ? `€${atrVal.toFixed(2)}` : '—', detail: 'Волатилност', signal: atrVal > closes[closes.length - 1] * 0.03 ? 'sell' : 'neutral', gauge: atrVal ? Math.min(100, (atrVal / closes[closes.length - 1]) * 3000) : 50, gaugeColor: atrVal > closes[closes.length - 1] * 0.03 ? 'var(--orange)' : 'var(--cyan)' }, { name: 'Обем', value: `${volAnalysis.ratio.toFixed(2)}x`, detail: volAnalysis.ratio > 1.2 ? 'Над средния' : volAnalysis.ratio < 0.8 ? 'Под средния' : 'Нормален', signal: volAnalysis.ratio > 1.5 ? 'buy' : 'neutral', gauge: Math.min(100, volAnalysis.ratio * 50), gaugeColor: volAnalysis.ratio > 1.2 ? 'var(--green)' : 'var(--yellow)' }, { name: 'Momentum (10)', value: momVal ? `€${momVal.toFixed(2)}` : '—', detail: momVal > 0 ? 'Положителен' : 'Отрицателен', signal: momVal > 0 ? 'buy' : 'sell', gauge: momVal ? Math.min(100, Math.max(0, 50 + momVal * 5)) : 50, gaugeColor: momVal > 0 ? 'var(--green)' : 'var(--red)' } ]; let buyCount = 0, sellCount = 0; indicators.forEach(ind => { if (ind.signal === 'buy') buyCount++; else if (ind.signal === 'sell') sellCount++; }); let verdict, verdictClass; if (buyCount > sellCount + 2) { verdict = 'СИЛНО БИЧИ'; verdictClass = 'verdict-bullish'; } else if (buyCount > sellCount) { verdict = 'БИЧИ'; verdictClass = 'verdict-bullish'; } else if (sellCount > buyCount + 2) { verdict = 'СИЛНО МЕЧИ'; verdictClass = 'verdict-bearish'; } else if (sellCount > buyCount) { verdict = 'МЕЧИ'; verdictClass = 'verdict-bearish'; } else { verdict = 'НЕУТРАЛЕН'; verdictClass = 'verdict-neutral'; } return { indicators, verdict, verdictClass, buyCount, sellCount, neutralCount: indicators.length - buyCount - sellCount }; }
 function renderIndicators(containerId, result) { const container = document.getElementById(containerId); const html = result.indicators.map(ind => `<div class="indicator-item"><div class="indicator-left"><div><div class="indicator-name">${ind.name}</div><div class="indicator-detail">${ind.detail}</div></div></div><div class="indicator-right"><div class="gauge-container"><div class="gauge-bar"><div class="gauge-fill" style="width:${ind.gauge}%;background:${ind.gaugeColor}"></div></div></div><div class="indicator-value">${ind.value}</div><div class="indicator-signal signal-${ind.signal}">${ind.signal === 'buy' ? 'Купи' : ind.signal === 'sell' ? 'Продай' : 'Неутр.'}</div></div></div>`).join(''); container.innerHTML = html; }
@@ -538,15 +649,46 @@ async function fetchNewsFromMultipleSources() {
 
 // ============ ОБНОВЯВАНЕ НА ВСИЧКО ============
 async function fetchAndComputeIndicators() {
-    const data4h = await fetchChartDataWithVolume(2);
-    if (data4h.length > 0) { PRICE_HISTORY_4H = data4h; const result4h = computeIndicators(data4h, data4h.map(p => p.volume), '4h'); window.analysis4h = result4h; renderIndicators('indicators4h', result4h); }
-    const data1w = await fetchChartDataWithVolume(30);
-    if (data1w.length > 0) { PRICE_HISTORY_1W = data1w; const result1w = computeIndicators(data1w, data1w.map(p => p.volume), '1w'); window.analysis1w = result1w; renderIndicators('indicators1w', result1w); }
+    // Опит за 4H данни (последните 168 часа ≈ 7 дни)
+    let data4h = await fetchBinanceKlines('SOLEUR', '1h', 168);
+    if (!data4h || data4h.length === 0) {
+        // Ако няма данни от Binance, опитваме с CoinGecko като резервен
+        console.log('⚠️ Няма данни от Binance, опитваме с CoinGecko за 4H...');
+        try {
+            const geckoData = await fetchWithRetry(`${CG_BASE}/coins/solana/market_chart?vs_currency=eur&days=7`);
+            if (geckoData && geckoData.prices) {
+                data4h = geckoData.prices.map(p => ({ time: p[0], price: p[1], volume: 0 }));
+            }
+        } catch (e) { console.warn('CoinGecko 4H неуспешен:', e); }
+    }
+    if (data4h && data4h.length > 0) {
+        PRICE_HISTORY_4H = data4h;
+        const result4h = computeIndicators(data4h, data4h.map(p => p.volume || 0), '4h');
+        window.analysis4h = result4h;
+        renderIndicators('indicators4h', result4h);
+    }
+
+    // Опит за седмични данни (последните 30 дни)
+    let data1w = await fetchBinanceKlines('SOLEUR', '1d', 30);
+    if (!data1w || data1w.length === 0) {
+        console.log('⚠️ Няма седмични данни от Binance, опитваме с CoinGecko...');
+        try {
+            const geckoData = await fetchWithRetry(`${CG_BASE}/coins/solana/market_chart?vs_currency=eur&days=30`);
+            if (geckoData && geckoData.prices) {
+                data1w = geckoData.prices.map(p => ({ time: p[0], price: p[1], volume: 0 }));
+            }
+        } catch (e) { console.warn('CoinGecko седмични данни неуспешни:', e); }
+    }
+    if (data1w && data1w.length > 0) {
+        PRICE_HISTORY_1W = data1w;
+        const result1w = computeIndicators(data1w, data1w.map(p => p.volume || 0), '1w');
+        window.analysis1w = result1w;
+        renderIndicators('indicators1w', result1w);
+    }
+
     renderAnalysisSummary();
 }
-async function fetchChartDataWithVolume(days) {
-    try { const data = await fetchWithRetry(`${CG_BASE}/coins/solana/market_chart?vs_currency=eur&days=${days}`); const prices = data.prices; const volumes = data.total_volumes; return prices.map((p, i) => ({ time: p[0], price: p[1], volume: volumes[i] ? volumes[i][1] : 0 })); } catch (e) { console.error('Error fetching chart data:', e); return []; }
-}
+
 async function refreshAll() {
     const btn = document.getElementById('refreshBtn');
     btn.classList.add('spinning');
