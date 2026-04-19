@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SLNC Dashboard – Два източника за SOL цена</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-card: #1a1a2e;
+            --bg-card-hover: #1f1f35;
+            --border: #2a2a40;
+            --border-glow: #6c5ce7;
+            --text-primary: #e8e8f0;
+            --text-secondary: #8888a8;
+            --text-muted: #555570;
+            --accent: #6c5ce7;
+            --accent-light: #a29bfe;
+            --green: #00e676;
+            --green-dim: #00c853;
+            --red: #ff5252;
+            --red-dim: #ff1744;
+            --orange: #ffab40;
+            --blue: #448aff;
+            --yellow: #ffd740;
+            --cyan: #18ffff;
+            --sol-purple: #9945FF;
+            --sol-green: #14F195;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg-primary); color: var(--text-primary); min-height: 100vh; overflow-x: hidden; }
+        .header { background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-card) 100%); border-bottom: 1px solid var(--border); padding: 12px 16px; position: sticky; top: 0; z-index: 100; backdrop-filter: blur(20px); }
+        .header-content { max-width: 1200px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; }
+        .logo { display: flex; align-items: center; gap: 10px; }
+        .logo-icon { width: 36px; height: 36px; background: linear-gradient(135deg, var(--sol-purple), var(--sol-green)); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; color: #000; }
+        .logo-text { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, var(--sol-purple), var(--sol-green)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .header-status { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-secondary); }
+        .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .last-update { font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 12px; }
+        .section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-secondary); margin: 20px 0 10px 0; display: flex; align-items: center; gap: 8px; }
+        .section-title::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--border), transparent); }
+        .analysis-summary { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+        .analysis-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .analysis-block { background: var(--bg-secondary); border-radius: 10px; padding: 12px; border: 1px solid var(--border); }
+        .analysis-block-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+        .analysis-timeframe { font-size: 12px; font-weight: 600; color: var(--accent-light); text-transform: uppercase; letter-spacing: 1px; }
+        .analysis-verdict { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .verdict-bullish { background: rgba(0, 230, 118, 0.15); color: var(--green); border: 1px solid rgba(0, 230, 118, 0.3); }
+        .verdict-bearish { background: rgba(255, 82, 82, 0.15); color: var(--red); border: 1px solid rgba(255, 82, 82, 0.3); }
+        .verdict-neutral { background: rgba(255, 215, 64, 0.15); color: var(--yellow); border: 1px solid rgba(255, 215, 64, 0.3); }
+        .verdict-summary { font-size: 10px; color: var(--text-secondary); }
+        .price-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+        .price-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; transition: all 0.3s ease; position: relative; overflow: hidden; }
+        .price-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, var(--sol-purple), var(--sol-green)); opacity: 0.6; }
+        .price-card:hover { border-color: var(--border-glow); transform: translateY(-1px); }
+        .price-card-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 6px; }
+        .price-card-value { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 700; color: var(--text-primary); line-height: 1.2; }
+        .price-card-sub { font-size: 10px; color: var(--text-secondary); margin-top: 4px; font-family: 'JetBrains Mono', monospace; }
+        .price-change { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; }
+        .price-change.positive { color: var(--green); }
+        .price-change.negative { color: var(--red); }
+        .main-grid { display: grid; grid-template-columns: 1fr 280px; gap: 12px; }
+        .indicators-section { min-width: 0; }
+        .indicators-list { display: flex; flex-direction: column; gap: 6px; }
+        .indicator-item { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; transition: all 0.2s ease; }
+        .indicator-item:hover { background: var(--bg-card-hover); border-color: var(--accent); }
+        .indicator-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+        .indicator-name { font-size: 12px; font-weight: 600; color: var(--text-primary); white-space: nowrap; }
+        .indicator-detail { font-size: 10px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .indicator-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+        .indicator-value { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+        .indicator-signal { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.5px; min-width: 55px; text-align: center; }
+        .signal-buy { background: rgba(0, 230, 118, 0.15); color: var(--green); border: 1px solid rgba(0, 230, 118, 0.3); }
+        .signal-sell { background: rgba(255, 82, 82, 0.15); color: var(--red); border: 1px solid rgba(255, 82, 82, 0.3); }
+        .signal-neutral { background: rgba(255, 215, 64, 0.15); color: var(--yellow); border: 1px solid rgba(255, 215, 64, 0.3); }
+        .portfolio-section { position: sticky; top: 70px; height: fit-content; }
+        .portfolio-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+        .portfolio-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+        .portfolio-title { font-size: 13px; font-weight: 700; color: var(--text-primary); }
+        .portfolio-total { background: var(--bg-secondary); border-radius: 8px; padding: 10px; text-align: center; margin-bottom: 12px; border: 1px solid var(--border); }
+        .portfolio-total-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
+        .portfolio-total-value { font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; color: var(--sol-green); margin: 4px 0; }
+        .portfolio-total-change { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; }
+        .portfolio-inputs { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+        .input-group { display: flex; flex-direction: column; gap: 4px; }
+        .input-label { font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+        .input-field { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 500; outline: none; transition: border-color 0.2s; width: 100%; }
+        .input-field:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(108, 92, 231, 0.2); }
+        .portfolio-btn { background: linear-gradient(135deg, var(--sol-purple), var(--accent)); color: white; border: none; border-radius: 8px; padding: 8px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s; text-transform: uppercase; letter-spacing: 0.5px; width: 100%; }
+        .portfolio-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(108, 92, 231, 0.4); }
+        .portfolio-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .portfolio-stat { background: var(--bg-secondary); border-radius: 8px; padding: 8px; text-align: center; border: 1px solid var(--border); }
+        .portfolio-stat-label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+        .portfolio-stat-value { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: var(--text-primary); margin-top: 2px; }
+        .news-section { margin-top: 14px; }
+        .news-list { display: flex; flex-direction: column; gap: 8px; }
+        .news-item { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; transition: all 0.2s ease; cursor: pointer; text-decoration: none; display: block; }
+        .news-item:hover { border-color: var(--accent); background: var(--bg-card-hover); }
+        .news-title { font-size: 13px; font-weight: 600; color: var(--text-primary); line-height: 1.4; margin-bottom: 6px; }
+        .news-meta { display: flex; align-items: center; justify-content: space-between; }
+        .news-source { font-size: 10px; color: var(--accent-light); font-weight: 600; }
+        .news-date { font-size: 10px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+        .loading { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; gap: 12px; }
+        .loading-spinner { width: 30px; height: 30px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .error-msg { background: rgba(255, 82, 82, 0.1); border: 1px solid rgba(255, 82, 82, 0.3); border-radius: 8px; padding: 10px; font-size: 12px; color: var(--red); text-align: center; }
+        @media (max-width: 768px) { .price-cards { grid-template-columns: repeat(2, 1fr); } .main-grid { grid-template-columns: 1fr; } .portfolio-section { position: static; } .price-card-value { font-size: 16px; } .analysis-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 400px) { .price-cards { grid-template-columns: 1fr 1fr; gap: 6px; } .price-card { padding: 10px; } .price-card-value { font-size: 14px; } .container { padding: 8px; } }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: var(--bg-primary); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        .gauge-container { display: flex; align-items: center; gap: 4px; }
+        .gauge-bar { width: 40px; height: 4px; background: var(--bg-secondary); border-radius: 2px; overflow: hidden; }
+        .gauge-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+        .indicator-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+        .indicator-tab { flex: 1; padding: 8px; text-align: center; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; font-size: 11px; font-weight: 600; color: var(--text-secondary); cursor: pointer; transition: all 0.2s; text-transform: uppercase; letter-spacing: 0.5px; }
+        .indicator-tab.active { background: var(--accent); border-color: var(--accent); color: white; }
+        .indicator-tab:hover:not(.active) { border-color: var(--accent); }
+        .indicator-content { display: none; }
+        .indicator-content.active { display: block; }
+        .refresh-btn { background: none; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; color: var(--text-secondary); cursor: pointer; font-size: 12px; transition: all 0.2s; display: flex; align-items: center; gap: 4px; }
+        .refresh-btn:hover { border-color: var(--accent); color: var(--accent-light); }
+        .refresh-btn.spinning svg { animation: spin 0.8s linear infinite; }
+        .calculator-note { font-size: 9px; color: var(--text-muted); text-align: center; margin-top: 8px; }
+    </style>
+</head>
+<body>
+
+<header class="header">
+    <div class="header-content">
+        <div class="logo">
+            <div class="logo-icon">S</div>
+            <span class="logo-text">SLNC Dashboard</span>
+        </div>
+        <div class="header-status">
+            <div class="status-dot" id="statusDot"></div>
+            <span class="last-update" id="lastUpdate">Зареждане...</span>
+            <button class="refresh-btn" id="refreshBtn" onclick="refreshAll()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                </svg>
+            </button>
+        </div>
+    </div>
+</header>
+
+<div class="container">
+    <!-- Цени -->
+    <div class="price-cards" id="priceCards">
+        <div class="loading"><div class="loading-spinner"></div><div class="loading-text">Зареждане на цени...</div></div>
+    </div>
+
+    <div class="section-title"><span class="icon">📊</span> Технически анализ</div>
+    <div class="analysis-summary" id="analysisSummary">
+        <div class="loading"><div class="loading-spinner"></div><div class="loading-text">Изчисляване на индикатори...</div></div>
+    </div>
+
+    <div class="indicator-tabs">
+        <div class="indicator-tab active" onclick="switchTab('4h')">4 Часа</div>
+        <div class="indicator-tab" onclick="switchTab('1w')">Седмица</div>
+    </div>
+
+    <div class="main-grid">
+        <div class="indicators-section">
+            <div class="indicator-content active" id="tab-4h">
+                <div class="indicators-list" id="indicators4h"><div class="loading"><div class="loading-spinner"></div><div class="loading-text">Зареждане на 4H данни...</div></div></div>
+            </div>
+            <div class="indicator-content" id="tab-1w">
+                <div class="indicators-list" id="indicators1w"><div class="loading"><div class="loading-spinner"></div><div class="loading-text">Зареждане на седмични данни...</div></div></div>
+            </div>
+        </div>
+
+        <!-- ПОРТФОЛИО В SLNC + КАЛКУЛАТОР -->
+        <div class="portfolio-section">
+            <div class="section-title" style="margin-top:0"><span class="icon">💼</span> Портфолио SLNC</div>
+            <div class="portfolio-card">
+                <div class="portfolio-total">
+                    <div class="portfolio-total-label">Текуща стойност (EUR)</div>
+                    <div class="portfolio-total-value" id="portfolioTotal">€0.00</div>
+                    <div class="portfolio-total-change" id="portfolioChange">—</div>
+                </div>
+                <div class="portfolio-inputs">
+                    <div class="input-group">
+                        <label class="input-label">Количество SLNC</label>
+                        <input type="number" class="input-field" id="portfolioQty" placeholder="0.00 SLNC" step="0.01" min="0">
+                    </div>
+                    <div class="input-group">
+                        <label class="input-label">Средна цена (EUR)</label>
+                        <input type="number" class="input-field" id="portfolioAvgPrice" placeholder="0.00" step="0.01" min="0">
+                    </div>
+                    <button class="portfolio-btn" onclick="savePortfolio()">Запази портфолио</button>
+                </div>
+                <div class="portfolio-stats">
+                    <div class="portfolio-stat">
+                        <div class="portfolio-stat-label">Инвестиция</div>
+                        <div class="portfolio-stat-value" id="portfolioInvested">€0.00</div>
+                    </div>
+                    <div class="portfolio-stat">
+                        <div class="portfolio-stat-label">Печалба/Загуба</div>
+                        <div class="portfolio-stat-value" id="portfolioPnl">€0.00</div>
+                    </div>
+                    <div class="portfolio-stat">
+                        <div class="portfolio-stat-label">ROI</div>
+                        <div class="portfolio-stat-value" id="portfolioRoi">0.00%</div>
+                    </div>
+                    <div class="portfolio-stat">
+                        <div class="portfolio-stat-label">Средна цена</div>
+                        <div class="portfolio-stat-value" id="portfolioAvgDisplay">€0.00</div>
+                    </div>
+                </div>
+
+                <!-- КАЛКУЛАТОР С ЦЕНИ В SOL -->
+                <div style="margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px;">
+                    <div class="input-label" style="margin-bottom: 8px;">📐 Калкулатор (цени в SOL → SLNC)</div>
+                    <div class="portfolio-inputs" style="margin-bottom: 8px;">
+                        <div class="input-group">
+                            <label class="input-label">Сума за инвестиция (EUR)</label>
+                            <input type="number" class="input-field" id="investAmount" placeholder="0.00" step="10" value="100">
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label">SOL цена на покупка (EUR)</label>
+                            <input type="number" class="input-field" id="buySolPrice" placeholder="текуща SOL цена" step="0.01">
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label">SOL целева цена за продажба (EUR)</label>
+                            <input type="number" class="input-field" id="sellSolPrice" placeholder="текуща SOL цена" step="0.01">
+                        </div>
+                    </div>
+                    <div class="portfolio-stats" id="calculatorResults">
+                        <div class="portfolio-stat">
+                            <div class="portfolio-stat-label">Ще получите</div>
+                            <div class="portfolio-stat-value" id="calcQty">0.00 SLNC</div>
+                        </div>
+                        <div class="portfolio-stat">
+                            <div class="portfolio-stat-label">Печалба при цел</div>
+                            <div class="portfolio-stat-value" id="calcProfit">€0.00</div>
+                        </div>
+                        <div class="portfolio-stat">
+                            <div class="portfolio-stat-label">ROI</div>
+                            <div class="portfolio-stat-value" id="calcRoi">0.00%</div>
+                        </div>
+                        <div class="portfolio-stat">
+                            <div class="portfolio-stat-label">Нова стойност</div>
+                            <div class="portfolio-stat-value" id="calcNewValue">€0.00</div>
+                        </div>
+                    </div>
+                    <div class="calculator-note">
+                        ⚡ 1 SLNC = 0.1125 SOL (фиксиран коефициент)
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="news-section">
+        <div class="section-title"><span class="icon">📰</span> Новини за Solana</div>
+        <div class="news-list" id="newsList">
+            <div class="loading"><div class="loading-spinner"></div><div class="loading-text">Зареждане на новини...</div></div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ============ Глобални променливи ============
+let SOL_PRICE = 0;
+let SLNC_PRICE = 0;
+let SOL_CHANGE_24H = 0;
+let SOL_HIGH_24H = 0;
+let SOL_LOW_24H = 0;
+let SOL_AMPLITUDE = 0;
+let PRICE_HISTORY_4H = [];
+let PRICE_HISTORY_1W = [];
+
+// Коефициент SOL -> SLNC (1 SLNC = 0.1125 SOL, следователно 1 SOL = 8.888888... SLNC)
+const SLNC_PER_SOL = 1 / 0.1125;   // ≈ 8.8888889
+
+// ============ CoinGecko API ============
+const CG_BASE = 'https://api.coingecko.com/api/v3';
+
+async function fetchWithRetry(url, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const res = await fetch(url);
+            if (res.status === 429) { await sleep(2000 * (i + 1)); continue; }
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+        } catch (e) {
+            if (i === retries - 1) throw e;
+            await sleep(1000 * (i + 1));
+        }
+    }
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ============ ВТОРИ ИЗТОЧНИК ЗА SOL ЦЕНА ============
+async function fetchFallbackPrice() {
+    try {
+        const url = 'https://min-api.cryptocompare.com/data/price?fsym=SOL&tsyms=EUR';
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`CryptoCompare HTTP ${response.status}`);
+        const data = await response.json();
+        if (data && data.EUR) {
+            console.log('✅ Цената е заредена от CryptoCompare');
+            return { price: data.EUR, change: null };
+        }
+        throw new Error('Няма EUR цена от CryptoCompare');
+    } catch (e) {
+        console.error('❌ CryptoCompare грешка:', e);
+        return null;
+    }
+}
+
+async function fetchPrices() {
+    let solPrice = 0;
+    let solChange = 0;
+    let slncPrice = 0;
+    let high24h = 0;
+    let low24h = 0;
+    let amplitude = 0;
+    let success = false;
+
+    // ---- ПЪРВИ ИЗТОЧНИК: CoinGecko ----
+    try {
+        const data = await fetchWithRetry(`${CG_BASE}/simple/price?ids=solana,selence&vs_currencies=eur&include_24hr_change=true&include_24hr_vol=true&include_market_cap=true`);
+        if (data.solana && data.solana.eur) {
+            solPrice = data.solana.eur;
+            solChange = data.solana.eur_24h_change || 0;
+            slncPrice = (data.selence && data.selence.eur) ? data.selence.eur : solPrice * 0.1125;
+            success = true;
+            console.log('✅ Цената е заредена от CoinGecko');
+        } else {
+            throw new Error('CoinGecko не върна валидни данни');
+        }
+
+        // Опит за 24h high/low от същия източник
+        const marketData = await fetchWithRetry(`${CG_BASE}/coins/solana?localization=false&tickers=false&community_data=false&developer_data=false&sparkline=false`);
+        if (marketData.market_data) {
+            high24h = marketData.market_data.high_24h.eur;
+            low24h = marketData.market_data.low_24h.eur;
+            amplitude = ((high24h - low24h) / low24h * 100);
+        }
+    } catch (e) {
+        console.warn('⚠️ CoinGecko неуспешен:', e.message);
+        success = false;
+    }
+
+    // ---- ВТОРИ ИЗТОЧНИК: CryptoCompare (ако първият не успя) ----
+    if (!success || solPrice === 0) {
+        console.log('🔄 Опит с резервен източник CryptoCompare...');
+        const fallback = await fetchFallbackPrice();
+        if (fallback && fallback.price > 0) {
+            solPrice = fallback.price;
+            solChange = 0;
+            slncPrice = solPrice * 0.1125;
+            success = true;
+            high24h = solPrice * 1.05;
+            low24h = solPrice * 0.95;
+            amplitude = 10;
+            console.log('✅ Цената е заредена от CryptoCompare (без 24h промяна)');
+        } else {
+            console.error('❌ И двата източника са недостъпни');
+        }
+    }
+
+    if (!success || solPrice === 0) {
+        document.getElementById('priceCards').innerHTML = `<div class="error-msg">❌ Неуспешно зареждане на цените от всички източници. Опитайте по-късно.</div>`;
+        return;
+    }
+
+    SOL_PRICE = solPrice;
+    SOL_CHANGE_24H = solChange;
+    SLNC_PRICE = slncPrice;
+    SOL_HIGH_24H = high24h;
+    SOL_LOW_24H = low24h;
+    SOL_AMPLITUDE = amplitude;
+
+    updatePriceCards();
+    updatePortfolioDisplay();
+    if (typeof updateCalculator === 'function') updateCalculator();
+}
+
+function updatePriceCards() {
+    const cards = document.getElementById('priceCards');
+    const changeClass = SOL_CHANGE_24H >= 0 ? 'positive' : 'negative';
+    const changeSign = SOL_CHANGE_24H >= 0 ? '+' : '';
+    cards.innerHTML = `
+        <div class="price-card"><div class="price-card-label">SOL / EUR</div><div class="price-card-value">€${SOL_PRICE.toFixed(2)}</div><div class="price-card-sub price-change ${changeClass}">${changeSign}${SOL_CHANGE_24H.toFixed(2)}%</div></div>
+        <div class="price-card"><div class="price-card-label">24ч Промяна</div><div class="price-card-value price-change ${changeClass}">${changeSign}${SOL_CHANGE_24H.toFixed(2)}%</div><div class="price-card-sub">Дневна разлика</div></div>
+        <div class="price-card"><div class="price-card-label">Дневна Амплитуда</div><div class="price-card-value">${SOL_AMPLITUDE.toFixed(2)}%</div><div class="price-card-sub">€${SOL_LOW_24H.toFixed(2)} — €${SOL_HIGH_24H.toFixed(2)}</div></div>
+        <div class="price-card"><div class="price-card-label">SLNC / EUR</div><div class="price-card-value">€${SLNC_PRICE.toFixed(4)}</div><div class="price-card-sub">1 SLNC = 0.1125 SOL</div></div>
+    `;
+}
+
+// ============ Технически индикатори (същите като в оригиналния код) ============
+function calcSMA(data, period) { const result = []; for (let i = 0; i < data.length; i++) { if (i < period - 1) { result.push(null); continue; } let sum = 0; for (let j = 0; j < period; j++) sum += data[i - j]; result.push(sum / period); } return result; }
+function calcEMA(data, period) { const result = []; const k = 2 / (period + 1); let ema = data[0]; result.push(ema); for (let i = 1; i < data.length; i++) { ema = data[i] * k + ema * (1 - k); result.push(ema); } return result; }
+function calcRSI(data, period = 14) { const changes = []; for (let i = 1; i < data.length; i++) changes.push(data[i] - data[i - 1]); let avgGain = 0, avgLoss = 0; for (let i = 0; i < period; i++) { if (changes[i] > 0) avgGain += changes[i]; else avgLoss += Math.abs(changes[i]); } avgGain /= period; avgLoss /= period; const rsi = []; for (let i = 0; i < period; i++) rsi.push(null); let rs = avgLoss === 0 ? 100 : avgGain / avgLoss; rsi.push(100 - (100 / (1 + rs))); for (let i = period; i < changes.length; i++) { const gain = changes[i] > 0 ? changes[i] : 0; const loss = changes[i] < 0 ? Math.abs(changes[i]) : 0; avgGain = (avgGain * (period - 1) + gain) / period; avgLoss = (avgLoss * (period - 1) + loss) / period; rs = avgLoss === 0 ? 100 : avgGain / avgLoss; rsi.push(100 - (100 / (1 + rs))); } return rsi; }
+function calcMACD(data) { const ema12 = calcEMA(data, 12); const ema26 = calcEMA(data, 26); const macdLine = ema12.map((v, i) => v - ema26[i]); const signalLine = calcEMA(macdLine.slice(26), 9); const paddedSignal = new Array(26 + 8).fill(null).concat(signalLine); const histogram = macdLine.map((v, i) => { if (i >= paddedSignal.length || paddedSignal[i] === null) return null; return v - paddedSignal[i]; }); return { macd: macdLine, signal: paddedSignal, histogram }; }
+function calcBollingerBands(data, period = 20, stdDev = 2) { const sma = calcSMA(data, period); const upper = [], lower = []; for (let i = 0; i < data.length; i++) { if (sma[i] === null) { upper.push(null); lower.push(null); continue; } let sumSq = 0; for (let j = 0; j < period; j++) sumSq += Math.pow(data[i - j] - sma[i], 2); const std = Math.sqrt(sumSq / period); upper.push(sma[i] + stdDev * std); lower.push(sma[i] - stdDev * std); } return { upper, middle: sma, lower }; }
+function calcStochastic(highs, lows, closes, kPeriod = 14, dPeriod = 3) { const kValues = []; for (let i = 0; i < closes.length; i++) { if (i < kPeriod - 1) { kValues.push(null); continue; } let highestHigh = -Infinity, lowestLow = Infinity; for (let j = 0; j < kPeriod; j++) { if (highs[i - j] > highestHigh) highestHigh = highs[i - j]; if (lows[i - j] < lowestLow) lowestLow = lows[i - j]; } const range = highestHigh - lowestLow; kValues.push(range === 0 ? 50 : ((closes[i] - lowestLow) / range) * 100); } const dValues = calcSMA(kValues.filter(v => v !== null), dPeriod); const paddedD = new Array(kPeriod - 1).fill(null).concat(dValues); return { k: kValues, d: paddedD }; }
+function calcATR(highs, lows, closes, period = 14) { const trueRanges = []; for (let i = 1; i < closes.length; i++) { const tr = Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1])); trueRanges.push(tr); } const atr = []; let avg = 0; for (let i = 0; i < period && i < trueRanges.length; i++) avg += trueRanges[i]; avg /= Math.min(period, trueRanges.length); atr.push(avg); for (let i = period; i < trueRanges.length; i++) { avg = (avg * (period - 1) + trueRanges[i]) / period; atr.push(avg); } return atr; }
+function calcWilliamsR(highs, lows, closes, period = 14) { const wr = []; for (let i = 0; i < closes.length; i++) { if (i < period - 1) { wr.push(null); continue; } let highestHigh = -Infinity, lowestLow = Infinity; for (let j = 0; j < period; j++) { if (highs[i - j] > highestHigh) highestHigh = highs[i - j]; if (lows[i - j] < lowestLow) lowestLow = lows[i - j]; } const range = highestHigh - lowestLow; wr.push(range === 0 ? -50 : ((highestHigh - closes[i]) / range) * -100); } return wr; }
+function calcMomentum(data, period = 10) { const mom = []; for (let i = 0; i < data.length; i++) { if (i < period) { mom.push(null); continue; } mom.push(data[i] - data[i - period]); } return mom; }
+function calcVolumeAnalysis(volumes, period = 20) { const avgVolume = calcSMA(volumes, period); const lastVol = volumes[volumes.length - 1]; const lastAvg = avgVolume[avgVolume.length - 1]; return { current: lastVol, average: lastAvg, ratio: lastAvg ? lastVol / lastAvg : 1 }; }
+function calcCCI(highs, lows, closes, period = 20) { const tp = closes.map((c, i) => (highs[i] + lows[i] + c) / 3); const sma = calcSMA(tp, period); const cci = []; for (let i = 0; i < closes.length; i++) { if (sma[i] === null) { cci.push(null); continue; } let meanDev = 0; for (let j = 0; j < period; j++) meanDev += Math.abs(tp[i - j] - sma[i]); meanDev /= period; cci.push(meanDev === 0 ? 0 : (tp[i] - sma[i]) / (0.015 * meanDev)); } return cci; }
+function calcOBV(closes, volumes) { const obv = [volumes[0] || 0]; for (let i = 1; i < closes.length; i++) { if (closes[i] > closes[i - 1]) obv.push(obv[i - 1] + (volumes[i] || 0)); else if (closes[i] < closes[i - 1]) obv.push(obv[i - 1] - (volumes[i] || 0)); else obv.push(obv[i - 1]); } return obv; }
+function generateHighLow(prices, volatility = 0.005) { const highs = [], lows = []; for (const p of prices) { const v = p * volatility; highs.push(p + v * Math.random()); lows.push(p - v * Math.random()); } return { highs, lows }; }
+function computeIndicators(prices, volumes, timeframe) { const closes = prices.map(p => p.price); const vols = prices.map(p => p.volume); const { highs, lows } = generateHighLow(closes); const rsi = calcRSI(closes, 14); const rsiVal = rsi.filter(v => v !== null).pop(); const macd = calcMACD(closes); const macdVal = macd.macd[macd.macd.length - 1]; const macdHist = macd.histogram.filter(v => v !== null).pop(); const bb = calcBollingerBands(closes, 20, 2); const bbUpper = bb.upper.filter(v => v !== null).pop(); const bbLower = bb.lower.filter(v => v !== null).pop(); const bbPos = bbUpper && bbLower ? ((closes[closes.length - 1] - bbLower) / (bbUpper - bbLower) * 100) : 50; const ema9 = calcEMA(closes, 9); const ema21 = calcEMA(closes, 21); const ema9Val = ema9[ema9.length - 1]; const ema21Val = ema21[ema21.length - 1]; const sma50 = calcSMA(closes, 50); const sma50Val = sma50.filter(v => v !== null).pop(); const stoch = calcStochastic(highs, lows, closes); const stochK = stoch.k.filter(v => v !== null).pop(); const wr = calcWilliamsR(highs, lows, closes); const wrVal = wr.filter(v => v !== null).pop(); const atr = calcATR(highs, lows, closes); const atrVal = atr[atr.length - 1]; const volAnalysis = calcVolumeAnalysis(vols); const mom = calcMomentum(closes, 10); const momVal = mom.filter(v => v !== null).pop(); const indicators = [ { name: 'RSI (14)', value: rsiVal ? rsiVal.toFixed(1) : '—', detail: rsiVal < 30 ? 'Продаден' : rsiVal > 70 ? 'Купен' : 'Неутрален', signal: rsiVal < 30 ? 'buy' : rsiVal > 70 ? 'sell' : 'neutral', gauge: rsiVal || 50, gaugeColor: rsiVal < 30 ? 'var(--green)' : rsiVal > 70 ? 'var(--red)' : 'var(--yellow)' }, { name: 'MACD', value: macdVal ? macdVal.toFixed(2) : '—', detail: `Hist: ${macdHist ? macdHist.toFixed(2) : '—'}`, signal: macdHist > 0 ? 'buy' : 'sell', gauge: Math.min(100, Math.max(0, 50 + macdHist * 10)), gaugeColor: macdHist > 0 ? 'var(--green)' : 'var(--red)' }, { name: 'Bollinger Bands', value: `${bbPos.toFixed(0)}%`, detail: `U: ${bbUpper?.toFixed(2) || '—'} | L: ${bbLower?.toFixed(2) || '—'}`, signal: bbPos > 80 ? 'sell' : bbPos < 20 ? 'buy' : 'neutral', gauge: bbPos, gaugeColor: bbPos > 80 ? 'var(--red)' : bbPos < 20 ? 'var(--green)' : 'var(--yellow)' }, { name: 'EMA 9/21', value: `${ema9Val?.toFixed(2) || '—'} / ${ema21Val?.toFixed(2) || '—'}`, detail: ema9Val > ema21Val ? 'Бичи кръст' : 'Мечи кръст', signal: ema9Val > ema21Val ? 'buy' : 'sell', gauge: ema9Val > ema21Val ? 75 : 25, gaugeColor: ema9Val > ema21Val ? 'var(--green)' : 'var(--red)' }, { name: 'SMA 50', value: sma50Val ? sma50Val.toFixed(2) : '—', detail: closes[closes.length - 1] > sma50Val ? 'Над SMA' : 'Под SMA', signal: closes[closes.length - 1] > sma50Val ? 'buy' : 'sell', gauge: closes[closes.length - 1] > sma50Val ? 70 : 30, gaugeColor: closes[closes.length - 1] > sma50Val ? 'var(--green)' : 'var(--red)' }, { name: 'Stochastic', value: `%K: ${stochK?.toFixed(1) || '—'}`, detail: `%D: ${stoch?.d?.filter(v=>v!==null).pop()?.toFixed(1) || '—'}`, signal: stochK < 20 ? 'buy' : stochK > 80 ? 'sell' : 'neutral', gauge: stochK || 50, gaugeColor: stochK < 20 ? 'var(--green)' : stochK > 80 ? 'var(--red)' : 'var(--yellow)' }, { name: 'Williams %R', value: wrVal ? wrVal.toFixed(1) : '—', detail: wrVal < -80 ? 'Продаден' : wrVal > -20 ? 'Купен' : 'Неутрален', signal: wrVal < -80 ? 'buy' : wrVal > -20 ? 'sell' : 'neutral', gauge: wrVal ? (wrVal + 100) : 50, gaugeColor: wrVal < -80 ? 'var(--green)' : wrVal > -20 ? 'var(--red)' : 'var(--yellow)' }, { name: 'ATR (14)', value: atrVal ? `€${atrVal.toFixed(2)}` : '—', detail: 'Волатилност', signal: atrVal > closes[closes.length - 1] * 0.03 ? 'sell' : 'neutral', gauge: atrVal ? Math.min(100, (atrVal / closes[closes.length - 1]) * 3000) : 50, gaugeColor: atrVal > closes[closes.length - 1] * 0.03 ? 'var(--orange)' : 'var(--cyan)' }, { name: 'Обем', value: `${volAnalysis.ratio.toFixed(2)}x`, detail: volAnalysis.ratio > 1.2 ? 'Над средния' : volAnalysis.ratio < 0.8 ? 'Под средния' : 'Нормален', signal: volAnalysis.ratio > 1.5 ? 'buy' : 'neutral', gauge: Math.min(100, volAnalysis.ratio * 50), gaugeColor: volAnalysis.ratio > 1.2 ? 'var(--green)' : 'var(--yellow)' }, { name: 'Momentum (10)', value: momVal ? `€${momVal.toFixed(2)}` : '—', detail: momVal > 0 ? 'Положителен' : 'Отрицателен', signal: momVal > 0 ? 'buy' : 'sell', gauge: momVal ? Math.min(100, Math.max(0, 50 + momVal * 5)) : 50, gaugeColor: momVal > 0 ? 'var(--green)' : 'var(--red)' } ]; let buyCount = 0, sellCount = 0; indicators.forEach(ind => { if (ind.signal === 'buy') buyCount++; else if (ind.signal === 'sell') sellCount++; }); let verdict, verdictClass; if (buyCount > sellCount + 2) { verdict = 'СИЛНО БИЧИ'; verdictClass = 'verdict-bullish'; } else if (buyCount > sellCount) { verdict = 'БИЧИ'; verdictClass = 'verdict-bullish'; } else if (sellCount > buyCount + 2) { verdict = 'СИЛНО МЕЧИ'; verdictClass = 'verdict-bearish'; } else if (sellCount > buyCount) { verdict = 'МЕЧИ'; verdictClass = 'verdict-bearish'; } else { verdict = 'НЕУТРАЛЕН'; verdictClass = 'verdict-neutral'; } return { indicators, verdict, verdictClass, buyCount, sellCount, neutralCount: indicators.length - buyCount - sellCount }; }
+function renderIndicators(containerId, result) { const container = document.getElementById(containerId); const html = result.indicators.map(ind => `<div class="indicator-item"><div class="indicator-left"><div><div class="indicator-name">${ind.name}</div><div class="indicator-detail">${ind.detail}</div></div></div><div class="indicator-right"><div class="gauge-container"><div class="gauge-bar"><div class="gauge-fill" style="width:${ind.gauge}%;background:${ind.gaugeColor}"></div></div></div><div class="indicator-value">${ind.value}</div><div class="indicator-signal signal-${ind.signal}">${ind.signal === 'buy' ? 'Купи' : ind.signal === 'sell' ? 'Продай' : 'Неутр.'}</div></div></div>`).join(''); container.innerHTML = html; }
+function renderAnalysisSummary() { const container = document.getElementById('analysisSummary'); container.innerHTML = `<div class="analysis-grid"><div class="analysis-block"><div class="analysis-block-header"><span class="analysis-timeframe">📈 4 Часа</span><span class="analysis-verdict ${window.analysis4h?.verdictClass || 'verdict-neutral'}">${window.analysis4h?.verdict || '—'}</span></div><div class="verdict-summary">🟢 Купи: ${window.analysis4h?.buyCount || 0} &nbsp; 🔴 Продай: ${window.analysis4h?.sellCount || 0} &nbsp; ⚪ Неутрални: ${window.analysis4h?.neutralCount || 0}</div></div><div class="analysis-block"><div class="analysis-block-header"><span class="analysis-timeframe">📅 Седмица</span><span class="analysis-verdict ${window.analysis1w?.verdictClass || 'verdict-neutral'}">${window.analysis1w?.verdict || '—'}</span></div><div class="verdict-summary">🟢 Купи: ${window.analysis1w?.buyCount || 0} &nbsp; 🔴 Продай: ${window.analysis1w?.sellCount || 0} &nbsp; ⚪ Неутрални: ${window.analysis1w?.neutralCount || 0}</div></div></div>`; }
+function switchTab(tab) { document.querySelectorAll('.indicator-tab').forEach(t => t.classList.remove('active')); document.querySelectorAll('.indicator-content').forEach(c => c.classList.remove('active')); if (tab === '4h') { document.querySelectorAll('.indicator-tab')[0].classList.add('active'); document.getElementById('tab-4h').classList.add('active'); } else { document.querySelectorAll('.indicator-tab')[1].classList.add('active'); document.getElementById('tab-1w').classList.add('active'); } }
+
+// ============ ПОРТФОЛИО (SLNC) ============
+function loadPortfolio() {
+    const qty = localStorage.getItem('slnc_portfolio_qty');
+    const avg = localStorage.getItem('slnc_portfolio_avg');
+    if (qty) document.getElementById('portfolioQty').value = qty;
+    if (avg) document.getElementById('portfolioAvgPrice').value = avg;
+    updatePortfolioDisplay();
+}
+function savePortfolio() {
+    const qty = document.getElementById('portfolioQty').value;
+    const avg = document.getElementById('portfolioAvgPrice').value;
+    localStorage.setItem('slnc_portfolio_qty', qty);
+    localStorage.setItem('slnc_portfolio_avg', avg);
+    updatePortfolioDisplay();
+    const btn = document.querySelector('.portfolio-btn');
+    btn.textContent = '✓ Запазено!';
+    btn.style.background = 'var(--green)';
+    setTimeout(() => { btn.textContent = 'Запази портфолио'; btn.style.background = ''; }, 1500);
+}
+function updatePortfolioDisplay() {
+    const qty = parseFloat(document.getElementById('portfolioQty').value) || 0;
+    const avg = parseFloat(document.getElementById('portfolioAvgPrice').value) || 0;
+    const currentVal = qty * SLNC_PRICE;
+    const invested = qty * avg;
+    const pnl = currentVal - invested;
+    const roi = invested > 0 ? (pnl / invested * 100) : 0;
+    document.getElementById('portfolioTotal').textContent = `€${currentVal.toFixed(2)}`;
+    document.getElementById('portfolioInvested').textContent = `€${invested.toFixed(2)}`;
+    const pnlEl = document.getElementById('portfolioPnl');
+    pnlEl.textContent = `${pnl >= 0 ? '+' : ''}€${pnl.toFixed(2)}`;
+    pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    const roiEl = document.getElementById('portfolioRoi');
+    roiEl.textContent = `${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%`;
+    roiEl.style.color = roi >= 0 ? 'var(--green)' : 'var(--red)';
+    document.getElementById('portfolioAvgDisplay').textContent = `€${avg.toFixed(2)}`;
+    const changeEl = document.getElementById('portfolioChange');
+    if (avg > 0 && SLNC_PRICE > 0) {
+        const diff = ((SLNC_PRICE - avg) / avg * 100).toFixed(2);
+        changeEl.textContent = `${diff >= 0 ? '+' : ''}${diff}% от средна цена`;
+        changeEl.className = `portfolio-total-change price-change ${diff >= 0 ? 'positive' : 'negative'}`;
+    } else { changeEl.textContent = '—'; }
+}
+
+// ============ КАЛКУЛАТОР С ЦЕНИ В SOL ============
+function updateCalculator() {
+    const investAmount = parseFloat(document.getElementById('investAmount').value) || 0;
+    let buySol = parseFloat(document.getElementById('buySolPrice').value);
+    let sellSol = parseFloat(document.getElementById('sellSolPrice').value);
+
+    if (isNaN(buySol) || buySol === 0) buySol = SOL_PRICE;
+    if (isNaN(sellSol) || sellSol === 0) sellSol = SOL_PRICE;
+
+    if (buySol <= 0) {
+        document.getElementById('calcQty').innerHTML = '0.00 SLNC';
+        document.getElementById('calcProfit').innerHTML = '€0.00';
+        document.getElementById('calcRoi').innerHTML = '0.00%';
+        document.getElementById('calcNewValue').innerHTML = '€0.00';
+        return;
+    }
+
+    const solBought = investAmount / buySol;
+    const slncQty = solBought * SLNC_PER_SOL;
+    const sellSlncPrice = sellSol * 0.1125;
+    const finalValue = slncQty * sellSlncPrice;
+    const profit = finalValue - investAmount;
+    const roi = (profit / investAmount) * 100;
+
+    document.getElementById('calcQty').innerHTML = `${slncQty.toFixed(4)} SLNC`;
+    const profitEl = document.getElementById('calcProfit');
+    profitEl.innerHTML = `${profit >= 0 ? '+' : ''}€${profit.toFixed(2)}`;
+    profitEl.style.color = profit >= 0 ? 'var(--green)' : 'var(--red)';
+    const roiEl = document.getElementById('calcRoi');
+    roiEl.innerHTML = `${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%`;
+    roiEl.style.color = roi >= 0 ? 'var(--green)' : 'var(--red)';
+    document.getElementById('calcNewValue').innerHTML = `€${finalValue.toFixed(2)}`;
+}
+
+// ============ НОВИНИ ============
+async function fetchNews() {
+    const container = document.getElementById('newsList');
+    try {
+        const newsItems = await fetchNewsFromMultipleSources();
+        if (newsItems.length === 0) {
+            container.innerHTML = `<div class="news-item" onclick="window.open('https://solana.com/news','_blank')"><div class="news-title">Посетете Solana Blog за последните новини</div><div class="news-meta"><span class="news-source">solana.com</span><span class="news-date">${new Date().toLocaleDateString('bg-BG')}</span></div></div>`;
+            return;
+        }
+        container.innerHTML = newsItems.slice(0, 5).map(news => `<a class="news-item" href="${news.url}" target="_blank" rel="noopener"><div class="news-title">${news.title}</div><div class="news-meta"><span class="news-source">${news.source}</span><span class="news-date">${news.date}</span></div></a>`).join('');
+    } catch (e) { console.error('Error fetching news:', e); container.innerHTML = `<div class="error-msg">Неуспешно зареждане на новини.</div>`; }
+}
+async function fetchNewsFromMultipleSources() {
+    const news = [];
+    try {
+        const proxyUrl = 'https://api.allorigins.win/get?url=';
+        const rssUrl = encodeURIComponent('https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml&size=20');
+        const resp = await fetch(proxyUrl + rssUrl);
+        const data = await resp.json();
+        if (data.contents) {
+            const parser = new DOMParser();
+            const xml = parser.parseFromString(data.contents, 'text/xml');
+            const items = xml.querySelectorAll('item');
+            items.forEach(item => {
+                const title = item.querySelector('title')?.textContent || '';
+                const link = item.querySelector('link')?.textContent || '';
+                const pubDate = item.querySelector('pubDate')?.textContent || '';
+                if (title.toLowerCase().includes('solana') || title.toLowerCase().includes('sol')) {
+                    news.push({ title, url: link, source: 'CoinDesk', date: pubDate ? new Date(pubDate).toLocaleDateString('bg-BG') : '' });
+                }
+            });
+        }
+    } catch (e) {}
+    if (news.length < 3) {
+        const fallbackNews = [
+            { title: 'Solana (SOL) Цена и Пазарен Анализ — Последни Новини', url: 'https://www.coingecko.com/en/coins/solana', source: 'CoinGecko', date: new Date().toLocaleDateString('bg-BG') },
+            { title: 'Solana Blockchain Development — Official Blog', url: 'https://solana.com/news', source: 'Solana', date: new Date().toLocaleDateString('bg-BG') },
+            { title: 'Solana Network Updates & Ecosystem Growth', url: 'https://solscan.io/', source: 'Solscan', date: new Date().toLocaleDateString('bg-BG') },
+        ];
+        fallbackNews.forEach(n => { if (!news.some(existing => existing.title === n.title)) news.push(n); });
+    }
+    return news;
+}
+
+// ============ ОБНОВЯВАНЕ НА ВСИЧКО ============
+async function fetchAndComputeIndicators() {
+    const data4h = await fetchChartDataWithVolume(2);
+    if (data4h.length > 0) { PRICE_HISTORY_4H = data4h; const result4h = computeIndicators(data4h, data4h.map(p => p.volume), '4h'); window.analysis4h = result4h; renderIndicators('indicators4h', result4h); }
+    const data1w = await fetchChartDataWithVolume(30);
+    if (data1w.length > 0) { PRICE_HISTORY_1W = data1w; const result1w = computeIndicators(data1w, data1w.map(p => p.volume), '1w'); window.analysis1w = result1w; renderIndicators('indicators1w', result1w); }
+    renderAnalysisSummary();
+}
+async function fetchChartDataWithVolume(days) {
+    try { const data = await fetchWithRetry(`${CG_BASE}/coins/solana/market_chart?vs_currency=eur&days=${days}`); const prices = data.prices; const volumes = data.total_volumes; return prices.map((p, i) => ({ time: p[0], price: p[1], volume: volumes[i] ? volumes[i][1] : 0 })); } catch (e) { console.error('Error fetching chart data:', e); return []; }
+}
+async function refreshAll() {
+    const btn = document.getElementById('refreshBtn');
+    btn.classList.add('spinning');
+    try {
+        await Promise.all([ fetchPrices(), fetchAndComputeIndicators() ]);
+        fetchNews();
+        updatePortfolioDisplay();
+        updateCalculator();
+        document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('bg-BG');
+    } catch (e) { console.error('Refresh error:', e); }
+    btn.classList.remove('spinning');
+}
+
+// ============ INIT ============
+function bindCalculatorEvents() {
+    const amountInput = document.getElementById('investAmount');
+    const buyInput = document.getElementById('buySolPrice');
+    const sellInput = document.getElementById('sellSolPrice');
+    if (amountInput) amountInput.addEventListener('input', updateCalculator);
+    if (buyInput) buyInput.addEventListener('input', updateCalculator);
+    if (sellInput) sellInput.addEventListener('input', updateCalculator);
+}
+
+async function init() {
+    loadPortfolio();
+    bindCalculatorEvents();
+    await refreshAll();
+    setInterval(async () => { await fetchPrices(); updatePortfolioDisplay(); updateCalculator(); document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('bg-BG'); }, 60000);
+}
+init();
+</script>
+</body>
+</html>
